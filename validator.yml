@@ -13,6 +13,7 @@ Metadata:
           - ApplicationInstanceStorageIOPS
           - Ubuntu18ImageId
           - ApplicationName
+          - WalletPassword
 
     ParameterLabels:
       # Application Label
@@ -30,12 +31,14 @@ Metadata:
         default: Ubuntu18ImageId
       ApplicationName:
         default: ApplicationName
+      WalletPassword:
+        default: WalletPassword
 Parameters:
   # Application Parameters
   ApplicationInstanceType:
     Description: Application server EC2 instance type
     Type: String
-    Default: c5d.large
+    Default: c5d.xlarge
   ApplicationInstanceStorageSize:
     Description: Application server storage size (in GBs)
     Type: Number
@@ -63,6 +66,11 @@ Parameters:
     Description: Application Name
     Type: String
     Default: prysm
+  WalletPassword:
+    Description: WalletPassword will be wrote to validator/passwords/wallet-password
+    Type: String
+    Default: prysm
+    NoEcho: "true"
 
 Conditions:
   ApplicationStorageWithIOPSCondition: !Equals [!Ref ApplicationInstanceStorageType, io1]
@@ -249,81 +257,6 @@ Resources:
       RouteTableId: !Ref PrivateRouteTable2
 
   # Application Resources
-  EFSKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: !Sub ${ApplicationName} EFS Key
-      Enabled: true
-      EnableKeyRotation: true
-      KeyUsage: ENCRYPT_DECRYPT
-      KeyPolicy:
-        Version: "2012-10-17"
-        Id: key-default-1
-        Statement:
-          - Sid: Enable IAM User Permissions
-            Effect: Allow
-            Principal:
-              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
-            Action: kms:*
-            Resource: "*"
-          - Sid: "Allow Application instances access to the key."
-            Effect: "Allow"
-            Principal:
-              AWS: !GetAtt ApplicationInstanceRole.Arn
-            Action:
-              - "kms:Encrypt"
-              - "kms:Decrypt"
-              - "kms:ReEncrypt*"
-              - "kms:GenerateDataKey*"
-              - "kms:DescribeKey"
-            Resource: "*"
-      Tags:
-        - Key: Name
-          Value: !Sub ${ApplicationName} Key
-  EFSAlias:
-    Type: AWS::KMS::Alias
-    Properties:
-      AliasName: alias/efs-prysm
-      TargetKeyId:
-        Ref: EFSKey
-  EFSFileSystem:
-    Type: AWS::EFS::FileSystem
-    Properties:
-      PerformanceMode: generalPurpose
-      Encrypted: true
-      KmsKeyId: !Ref EFSKey
-      FileSystemTags:
-        - Key: Name
-          Value: !Join [" ", [!Ref "AWS::StackName", "cluster shared-files"]]
-        - Key: Application
-          Value: !Ref AWS::StackId
-
-  EFSMountTarget1:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SecurityGroups:
-        - !GetAtt EFSSecurityGroup.GroupId
-      SubnetId: !Ref PrivateSubnet1
-
-  EFSMountTarget2:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SecurityGroups:
-        - !GetAtt EFSSecurityGroup.GroupId
-      SubnetId: !Ref PrivateSubnet2
-
-  EFSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Enable NFS access from Application Instances.
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - FromPort: 2049
-          IpProtocol: tcp
-          ToPort: 2049
-          SourceSecurityGroupId: !GetAtt ApplicationInstanceSecurityGroup.GroupId
   ApplicationInstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -352,43 +285,8 @@ Resources:
       Roles:
         - Ref: ApplicationInstanceRole
 
-  ApplicationAutoScalingGroup:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    UpdatePolicy:
-      AutoScalingRollingUpdate:
-        MinInstancesInService: 1
-        # PauseTime: PT10m
-        WaitOnResourceSignals: false
-    Properties:
-      LaunchConfigurationName: !Ref ApplicationLaunchConfiguration
-      VPCZoneIdentifier:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      MinSize: 1
-      MaxSize: 2
-      Cooldown: "300"
-      DesiredCapacity: 1
-      TargetGroupARNs:
-        - !Ref ApplicationLoadBalancerTargetGroup
-      Tags:
-        - Key: Name
-          Value: !Ref ApplicationName
-          PropagateAtLaunch: "true"
-    # CreationPolicy:
-    #   ResourceSignal:
-    #     Count: !Ref ApplicationMinNodes
-    #     Timeout: PT60M
-  ApplicationScalingPolicy:
-    Type: AWS::AutoScaling::ScalingPolicy
-    Properties:
-      AutoScalingGroupName: !Ref ApplicationAutoScalingGroup
-      PolicyType: TargetTrackingScaling
-      TargetTrackingConfiguration:
-        PredefinedMetricSpecification:
-          PredefinedMetricType: ASGAverageCPUUtilization
-        TargetValue: 80
-  ApplicationLaunchConfiguration:
-    Type: AWS::AutoScaling::LaunchConfiguration
+  ApplicationEC2Instance:
+    Type: AWS::EC2::Instance
     Metadata:
       Comment: Install application
       AWS::CloudFormation::Init:
@@ -543,13 +441,9 @@ Resources:
                         "append_dimensions": {
                             "ImageId": "${aws:ImageId}",
                             "InstanceId": "${aws:InstanceId}",
-                            "InstanceType": "${aws:InstanceType}",
-                            "AutoScalingGroupName": "${aws:AutoScalingGroupName}"
+                            "InstanceType": "${aws:InstanceType}"
                         },
                         "aggregation_dimensions": [
-                            [
-                                "AutoScalingGroupName"
-                            ],
                             [
                                 "InstanceId",
                                 "InstanceType"
@@ -572,17 +466,16 @@ Resources:
               content: !Sub |
                 #!/bin/bash -x
 
-                # Root EFS for prysm data.
-                echo "${EFSFileSystem}.efs.${AWS::Region}.${AWS::URLSuffix}:/ /EFS nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 0 0" >> /etc/fstab
-                mkdir -p /EFS
-                mount -a
-
                 # localhost redirects
-                sysctl net.ipv4.ip_forward=1 
-                iptables -t nat -A PREROUTING -p tcp --dport 3000 -j DNAT --to-destination 127.0.0.1:3000
+                # sysctl net.ipv4.ip_forward=1 
+                sysctl -w net.ipv4.conf.ens5.route_localnet=1
+                # iptables -t nat -A PREROUTING -p tcp --dport 3000 -j DNAT --to-destination 127.0.0.1:3000
+                # iptables -A INPUT -p udp --dport 12000 -j ACCEPT
+                # iptables -A INPUT -p tcp --dport 13000 -j ACCEPT
+                # iptables-save
 
             "/install_prysm.sh":
-              content: |
+              content: !Sub |
                 #!/bin/bash -x
                 DEBIAN_FRONTEND=noninteractive && dpkg --configure -a
                 curl -L "https://github.com/docker/compose/releases/download/1.27.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
@@ -594,14 +487,17 @@ Resources:
                 systemctl enable docker.service
                 systemctl start docker.service
                 usermod -aG docker ubuntu
-                cd /EFS
+                cd /home/ubuntu/
                 git clone https://github.com/stefa2k/prysm-docker-compose.git
                 cd prysm-docker-compose
                 curl -LO https://github.com/ethereum/eth2.0-deposit-cli/releases/download/v0.3.0/eth2deposit-cli-1681a93-linux-amd64.tar.gz
                 tar -zxvf eth2deposit-cli-1681a93-linux-amd64.tar.gz
                 rm -rf eth2deposit-cli-1681a93-linux-amd64.tar.gz
-                mkdir -p launchpad/eth2.0-deposit-cli/
-                chown -R ubuntu /EFS/prysm-docker-compose
+                mkdir -p launchpad/eth2.0-deposit-cli/validator_keys
+                mkdir -p validator/wallets
+                echo "${WalletPassword}" > validator/passwords/wallet-password
+                chown -R ubuntu /home/ubuntu/prysm-docker-compose
+                sed -i 's/127.0.0.1:3000/3000/g' docker-compose.yaml
 
           commands:
             1-configure-efs:
@@ -610,8 +506,9 @@ Resources:
               command: bash /install_prysm.sh
     Properties:
       ImageId: !Ref Ubuntu18ImageId
-      SecurityGroups:
+      SecurityGroupIds:
         - !Ref ApplicationInstanceSecurityGroup
+      SubnetId: !Ref PrivateSubnet1
       InstanceType: !Ref ApplicationInstanceType
       BlockDeviceMappings:
         - DeviceName: "/dev/sda1"
@@ -626,6 +523,9 @@ Resources:
                 - !Ref ApplicationInstanceStorageIOPS
                 - !Ref AWS::NoValue
       IamInstanceProfile: !Ref ApplicationInstanceProfile
+      Tags:
+        - Key: Name
+          Value: !Ref ApplicationName
       UserData:
         Fn::Base64: !Sub |
           #cloud-config
@@ -650,8 +550,8 @@ Resources:
             dpkg -i /tmp/amazon-cloudwatch-agent.deb
             mkdir -p /opt/aws/bin
             python /usr/lib/python2.7/dist-packages/easy_install.py --script-dir /opt/aws/bin https://s3.${AWS::URLSuffix}/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
-            /opt/aws/bin/cfn-init --stack ${AWS::StackName} --resource ApplicationLaunchConfiguration --region ${AWS::Region}
-            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ApplicationAutoScalingGroup --region ${AWS::Region}
+            /opt/aws/bin/cfn-init --stack ${AWS::StackName} --resource ApplicationEC2Instance --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ApplicationEC2Instance --region ${AWS::Region}
 
   ApplicationInstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -671,14 +571,18 @@ Resources:
           FromPort: "13000"
           ToPort: "13000"
           IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          FromPort: "3000"
+          ToPort: "3000"
+          IpProtocol: tcp
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Scheme: internal
+      Scheme: internet-facing
       Subnets:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
       Type: application
       SecurityGroups:
         - !Ref ApplicationLoadBalancerSecurityGroup
@@ -698,7 +602,7 @@ Resources:
       GroupDescription: Enable HTTP from internal environment.
       VpcId: !Ref VPC
       SecurityGroupIngress:
-        - CidrIp: 10.0.0.0/8
+        - CidrIp: 0.0.0.0/0
           FromPort: 3000
           ToPort: 3000
           IpProtocol: tcp
@@ -714,11 +618,88 @@ Resources:
     Properties:
       HealthCheckIntervalSeconds: 30
       HealthyThresholdCount: 3
-      Port: 80
+      Port: 3000
       Protocol: HTTP
       UnhealthyThresholdCount: 3
-      HealthCheckPath: /users/sign_in
+      HealthCheckPath: /
       VpcId: !Ref VPC
+      Targets:
+        - Id: !Ref ApplicationEC2Instance
+          Port: 3000
+
+  NetworkLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Type: network
+
+  NetworkLoadBalancerListener12000:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NetworkLoadBalancerListener12000TargetGroup
+      LoadBalancerArn: !Ref NetworkLoadBalancer
+      Port: "12000"
+      Protocol: TCP
+
+  NetworkLoadBalancerListener12000TargetGroup:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Description: |
+      Target group for the LoadBalancer. Note that the autoscaling group sets its
+      TargetGroupARN field to this target group, ensuring all instances are registered
+      with the target group
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      # This should be 13000 since health check doesn't support UDP
+      Port: 13000
+      Protocol: TCP
+      VpcId: !Ref VPC
+      Targets:
+        - Id: !Ref ApplicationEC2Instance
+          Port: 1300
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: true
+        - Key: stickiness.type
+          Value: source_ip
+
+  NetworkLoadBalancerListener13000:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NetworkLoadBalancerListener13000TargetGroup
+      LoadBalancerArn: !Ref NetworkLoadBalancer
+      Port: "13000"
+      Protocol: TCP
+
+  NetworkLoadBalancerListener13000TargetGroup:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Description: |
+      Target group for the LoadBalancer. Note that the autoscaling group sets its
+      TargetGroupARN field to this target group, ensuring all instances are registered
+      with the target group
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      Port: 13000
+      Protocol: TCP
+      VpcId: !Ref VPC
+      Targets:
+        - Id: !Ref ApplicationEC2Instance
+          Port: 13000
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: true
+        - Key: stickiness.type
+          Value: source_ip
 
 Outputs:
   # Prysm Outputs
