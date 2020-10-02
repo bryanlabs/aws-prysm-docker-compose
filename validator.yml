@@ -1,6 +1,6 @@
 ---
 AWSTemplateFormatVersion: "2010-09-09"
-Description: prysm-docker-compose on AWS EC2.
+Description: Prysm Validator Node on AWS EC2 via prysm-docker-compose.
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -15,6 +15,7 @@ Metadata:
           - ApplicationName
           - WalletPassword
           - GraffanaTrustedCIDR
+          - Network
 
     ParameterLabels:
       # Application Label
@@ -36,6 +37,8 @@ Metadata:
         default: WalletPassword
       GraffanaTrustedCIDR:
         default: GraffanaTrustedCIDR
+      Network:
+        default: Network
 Parameters:
   # Application Parameters
   ApplicationInstanceType:
@@ -78,6 +81,14 @@ Parameters:
     Description: The Source CIDR allowed to access the Grafana Dashboard. Use 0.0.0.0/0 to allow all.
     Type: String
     Default: 0.0.0.0/0
+  Network:
+    Description: Which Network should this node run on.
+    Type: String
+    Default: medalla
+    AllowedValues:
+      - mainnet
+      - medalla
+      - zinken
 
 Conditions:
   ApplicationStorageWithIOPSCondition: !Equals [!Ref ApplicationInstanceStorageType, io1]
@@ -706,6 +717,6 @@ Resources:
 
 Outputs:
   # Prysm Outputs
-  PrysmElasticLoadBalancerEndpoint:
-    Description: HTTP Access
-    Value: !Sub ${ApplicationLoadBalancer.DNSName}
+  ETHStakingDashboard:
+    Description: ETH Staking Dashboard.
+    Value: !Sub ${ApplicationLoadBalancer.DNSName}d/t2yHaa3Zz/eth-staking-dashboard?orgId=1&refresh=10s&from=now-24h&to=now
