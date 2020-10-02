@@ -1,7 +1,7 @@
 # aws-prysm-docker-compose
 This repository makes it easy to install [stefa2k/prysm-docker-compose](https://github.com/stefa2k/prysm-docker-compose) on AWS (Amazon Web Services).
 
-[![Launch Stack](https://cdn.rawgit.com/buildkite/cloudformation-launch-stack-button-svg/master/launch-stack.svg)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=PrysmValidator&templateURL=https://raw.githubusercontent.com/bryanlabs/aws-prysm-docker-compose/master/validator.yml)
+[![Launch Stack](https://cdn.rawgit.com/buildkite/cloudformation-launch-stack-button-svg/master/launch-stack.svg)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=PrysmValidator&templateURL=https://bryanlabs-public.s3.amazonaws.com/validator.yml)
 
 Or learn how to deploy cloudformation templates from the console    
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html  
