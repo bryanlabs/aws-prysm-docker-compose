@@ -14,6 +14,7 @@ Metadata:
           - Ubuntu18ImageId
           - ApplicationName
           - WalletPassword
+          - GraffanaTrustedCIDR
 
     ParameterLabels:
       # Application Label
@@ -33,6 +34,8 @@ Metadata:
         default: ApplicationName
       WalletPassword:
         default: WalletPassword
+      GraffanaTrustedCIDR:
+        default: GraffanaTrustedCIDR
 Parameters:
   # Application Parameters
   ApplicationInstanceType:
@@ -71,6 +74,10 @@ Parameters:
     Type: String
     Default: prysm
     NoEcho: "true"
+  GraffanaTrustedCIDR:
+    Description: The Source CIDR allowed to access the Grafana Dashboard. Use 0.0.0.0/0 to allow all.
+    Type: String
+    Default: 0.0.0.0/0
 
 Conditions:
   ApplicationStorageWithIOPSCondition: !Equals [!Ref ApplicationInstanceStorageType, io1]
@@ -559,10 +566,6 @@ Resources:
       VpcId: !Ref VPC
       GroupDescription: Enable SSH from NetworkLoadbalancer, and HTTP from ApplicationLoadbalancer.
       SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: "22"
-          ToPort: "22"
-          CidrIp: 0.0.0.0/0
         - CidrIp: 0.0.0.0/0
           FromPort: "12000"
           ToPort: "12000"
@@ -593,7 +596,7 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref ApplicationLoadBalancerTargetGroup
       LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: "3000"
+      Port: "80"
       Protocol: "HTTP"
 
   ApplicationLoadBalancerSecurityGroup:
@@ -602,9 +605,9 @@ Resources:
       GroupDescription: Enable HTTP from internal environment.
       VpcId: !Ref VPC
       SecurityGroupIngress:
-        - CidrIp: 0.0.0.0/0
-          FromPort: 3000
-          ToPort: 3000
+        - CidrIp: !Ref GraffanaTrustedCIDR
+          FromPort: 80
+          ToPort: 80
           IpProtocol: tcp
       Tags:
         - Key: Name
@@ -621,7 +624,7 @@ Resources:
       Port: 3000
       Protocol: HTTP
       UnhealthyThresholdCount: 3
-      HealthCheckPath: /
+      HealthCheckPath: /login
       VpcId: !Ref VPC
       Targets:
         - Id: !Ref ApplicationEC2Instance
@@ -705,4 +708,4 @@ Outputs:
   # Prysm Outputs
   PrysmElasticLoadBalancerEndpoint:
     Description: HTTP Access
-    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Value: !Sub ${ApplicationLoadBalancer.DNSName}
