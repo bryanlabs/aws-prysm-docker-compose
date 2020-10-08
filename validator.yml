@@ -676,7 +676,7 @@ Resources:
       VpcId: !Ref VPC
       Targets:
         - Id: !Ref ApplicationEC2Instance
-          Port: 13000
+          Port: 12000
       TargetGroupAttributes:
         - Key: stickiness.enabled
           Value: true
