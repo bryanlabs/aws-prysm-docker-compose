@@ -13,9 +13,12 @@ Metadata:
           - ApplicationInstanceStorageIOPS
           - Ubuntu18ImageId
           - ApplicationName
-          - WalletPassword
           - GraffanaTrustedCIDR
-          - Network
+          - KeyName
+          - GethOptions
+          - BeaconOptions
+          - ValidatorOptions
+          - PrometheusOptions
 
     ParameterLabels:
       # Application Label
@@ -33,18 +36,25 @@ Metadata:
         default: Ubuntu18ImageId
       ApplicationName:
         default: ApplicationName
-      WalletPassword:
-        default: WalletPassword
       GraffanaTrustedCIDR:
         default: GraffanaTrustedCIDR
-      Network:
-        default: Network
+      KeyName:
+        default: KeyName
+      GethOptions:
+        default: GethOptions
+      BeaconOptions:
+        default: BeaconOptions
+      ValidatorOptions:
+        default: ValidatorOptions
+      PrometheusOptions:
+        default: PrometheusOptions
+
 Parameters:
   # Application Parameters
   ApplicationInstanceType:
     Description: Application server EC2 instance type
     Type: String
-    Default: c5d.xlarge
+    Default: r5a.large
   ApplicationInstanceStorageSize:
     Description: Application server storage size (in GBs)
     Type: Number
@@ -71,24 +81,31 @@ Parameters:
   ApplicationName:
     Description: Application Name
     Type: String
-    Default: prysm
-  WalletPassword:
-    Description: WalletPassword will be wrote to validator/passwords/wallet-password
-    Type: String
-    Default: prysm
-    NoEcho: "true"
+    Default: Prysm Medalla Validator
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance.
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Can contain only ASCII characters.
   GraffanaTrustedCIDR:
     Description: The Source CIDR allowed to access the Grafana Dashboard. Use 0.0.0.0/0 to allow all.
     Type: String
     Default: 0.0.0.0/0
-  Network:
-    Description: Which Network should this node run on.
+  GethOptions:
+    Description: Geth options
     Type: String
-    Default: medalla
-    AllowedValues:
-      - mainnet
-      - medalla
-      - zinken
+    Default: --goerli --rpc --rpcport=8545 --rpcaddr=0.0.0.0 --rpcvhosts="*" --allow-insecure-unlock --rpcapi="db,eth,net,web3,personal"
+  BeaconOptions:
+    Description: Beacon options
+    Type: String
+    Default: --medalla --head-sync --http-web3provider http://localhost:8545 --enable-db-backup-webhook --p2p-tcp-port 13000 --rpc-host 0.0.0.0 --monitoring-host 0.0.0.0 --accept-terms-of-use
+  ValidatorOptions:
+    Description: Validator options
+    Type: String
+    Default: --medalla --wallet-password-file /home/ubuntu/prysm/wallet.password --accept-terms-of-use
+  PrometheusOptions:
+    Description: Prometheus Options
+    Type: String
+    Default: --config.file /etc/prometheus/prometheus.yml --web.console.templates=/etc/prometheus/consoles  --web.console.libraries=/etc/prometheus/console_libraries
 
 Conditions:
   ApplicationStorageWithIOPSCondition: !Equals [!Ref ApplicationInstanceStorageType, io1]
@@ -136,11 +153,13 @@ Resources:
       Tags:
         - Key: "Name"
           Value: !Sub ${VPC}-IGW1
+
   GatewayToInternet:
     Type: "AWS::EC2::VPCGatewayAttachment"
     Properties:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
+
   PublicRouteTable1:
     Type: "AWS::EC2::RouteTable"
     Properties:
@@ -151,16 +170,6 @@ Resources:
         - Key: "Gateway"
           Value: !Ref GatewayToInternet
 
-  PublicRouteTable2:
-    Type: "AWS::EC2::RouteTable"
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: "Name"
-          Value: !Sub ${VPC}-public-route-table2
-        - Key: "Gateway"
-          Value: !Ref GatewayToInternet
-
   PublicRoute1Hub:
     Type: AWS::EC2::Route
     Properties:
@@ -168,111 +177,11 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  PublicRoute2Hub:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PublicRouteTable2
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  PrivateRoute1GWHub:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable1
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NATGateway1
-
-  PrivateRoute2GWHub:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable2
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NATGateway2
-
   PublicSubnetRouteTableAssociation1:
     Type: "AWS::EC2::SubnetRouteTableAssociation"
     Properties:
       SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable1
-
-  PublicSubnetRouteTableAssociation2:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
-    Properties:
-      SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable2
-
-  ElasticIP1:
-    Type: "AWS::EC2::EIP"
-    Properties:
-      Domain: "vpc"
-
-  ElasticIP2:
-    Type: "AWS::EC2::EIP"
-    Properties:
-      Domain: "vpc"
-
-  NATGateway1:
-    Type: "AWS::EC2::NatGateway"
-    Properties:
-      AllocationId: !GetAtt ElasticIP1.AllocationId
-      SubnetId: !Ref PublicSubnet1
-
-  NATGateway2:
-    Type: "AWS::EC2::NatGateway"
-    Properties:
-      AllocationId: !GetAtt ElasticIP2.AllocationId
-      SubnetId: !Ref PublicSubnet2
-
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      AvailabilityZone: !Select
-        - 0
-        - Fn::GetAZs: !Ref "AWS::Region"
-      CidrBlock: 10.0.1.0/24
-      Tags:
-        - Key: Name
-          Value: !Sub ${AWS::StackName}-PrivateSubnet1
-      VpcId: !Ref VPC
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      AvailabilityZone: !Select
-        - 1
-        - Fn::GetAZs: !Ref "AWS::Region"
-      CidrBlock: 10.0.2.0/24
-      Tags:
-        - Key: Name
-          Value: !Sub ${AWS::StackName}-PrivateSubnet2
-      VpcId: !Ref VPC
-
-  PrivateRouteTable1:
-    Type: "AWS::EC2::RouteTable"
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: "Name"
-          Value: !Sub ${VPC}-Private-route-table1
-
-  PrivateRouteTable2:
-    Type: "AWS::EC2::RouteTable"
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: "Name"
-          Value: !Sub ${VPC}-Private-route-table2
-
-  PrivateSubnetRouteTableAssociation1:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
-    Properties:
-      SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable1
-  PrivateSubnetRouteTableAssociation2:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
-    Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable2
 
   # Application Resources
   ApplicationInstanceRole:
@@ -302,6 +211,35 @@ Resources:
     Properties:
       Roles:
         - Ref: ApplicationInstanceRole
+
+  EIP:
+    Type: "AWS::EC2::EIP"
+    Properties:
+      Domain: "vpc"
+
+  ENI:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref ApplicationName
+      Description: An EIP.
+      GroupSet:
+        - !GetAtt ApplicationInstanceSecurityGroup.GroupId
+      SubnetId: !Ref PublicSubnet1
+
+  Association:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      NetworkInterfaceId: !Ref ENI
+
+  InterfaceAttachment:
+    Type: AWS::EC2::NetworkInterfaceAttachment
+    Properties:
+      InstanceId: !Ref ApplicationEC2Instance
+      NetworkInterfaceId: !Ref ENI
+      DeviceIndex: "1"
 
   ApplicationEC2Instance:
     Type: AWS::EC2::Instance
@@ -480,54 +418,154 @@ Resources:
 
         04_config_prysm:
           files:
-            "/prysm-configure-env.sh":
+            "/etc/systemd/system/geth.service":
               content: !Sub |
-                #!/bin/bash -x
+                [Unit]
+                Description=Ethereum go client
 
-                # localhost redirects
-                # sysctl net.ipv4.ip_forward=1 
-                sysctl -w net.ipv4.conf.ens5.route_localnet=1
-                # iptables -t nat -A PREROUTING -p tcp --dport 3000 -j DNAT --to-destination 127.0.0.1:3000
-                # iptables -A INPUT -p udp --dport 12000 -j ACCEPT
-                # iptables -A INPUT -p tcp --dport 13000 -j ACCEPT
-                # iptables-save
+                [Service]
+                ExecStart=/usr/bin/geth ${GethOptions}
+                Restart=always
+                User=ubuntu
 
+                [Install]
+                WantedBy=multi-user.target
+            "/etc/systemd/system/beacon.service":
+              content: !Sub |
+                [Unit]
+                Description=Prysm beacon-chain client
+
+                [Service]
+                ExecStart=/home/ubuntu/prysm/prysm.sh beacon-chain ${BeaconOptions}
+                Restart=always
+                User=ubuntu
+
+                [Install]
+                WantedBy=multi-user.target
+            "/etc/systemd/system/validator.service":
+              content: !Sub |
+                [Unit]
+                Description=Prysm validator client
+
+                [Service]
+                WorkingDirectory=/home/ubuntu/prysm
+                User=ubuntu
+                Restart=always
+                ExecStart=/home/ubuntu/prysm/prysm.sh validator ${ValidatorOptions}
+                [Install]
+                WantedBy=default.target
+            "/etc/systemd/system/prometheus.service":
+              content: !Sub |
+                [Unit]
+                Description=prometheus client
+
+                [Service]
+                WorkingDirectory=/home/ubuntu/prometheus
+                User=ubuntu
+                ExecStart=/home/ubuntu/prometheus/prometheus ${PrometheusOptions}
+                [Install]
+                WantedBy=default.target
+            "/etc/prometheus/prometheus.yml":
+              content: !Sub |
+                global:
+                  scrape_interval: 15s
+
+                scrape_configs:
+                  - job_name: 'prometheus'
+                    scrape_interval: 5s
+                    static_configs:
+                    - targets: ['127.0.0.1:9090']
+                  - job_name: 'beacon'
+                    scrape_interval: 5s
+                    static_configs:
+                    - targets: ['127.0.0.1:8080']
+                  - job_name: 'node_exporter'
+                    scrape_interval: 5s
+                    static_configs:
+                    - targets: ['127.0.0.1:9100']
+                  - job_name: 'validator'
+                    scrape_interval: 5s
+                    static_configs:
+                    - targets: ['127.0.0.1:8081']
+                  - job_name: 'ping_google'
+                    metrics_path: /probe
+                    params:
+                      module: [icmp]
+                    static_configs:
+                      - targets:
+                        - 8.8.8.8
+                    relabel_configs:
+                      - source_labels: [__address__]
+                        target_label: __param_target
+                      - source_labels: [__param_target]
+                        target_label: instance
+                      - target_label: __address__
+                        replacement: 127.0.0.1:9115  # The blackbox exporter's real hostname:port.
+                  - job_name: 'ping_cloudflare'
+                    metrics_path: /probe
+                    params:
+                      module: [icmp]
+                    static_configs:
+                      - targets:
+                        - 1.1.1.1
+                    relabel_configs:
+                      - source_labels: [__address__]
+                        target_label: __param_target
+                      - source_labels: [__param_target]
+                        target_label: instance
+                      - target_label: __address__
+                        replacement: 127.0.0.1:9115  # The blackbox exporter's real hostname:port.
             "/install_prysm.sh":
               content: !Sub |
                 #!/bin/bash -x
                 DEBIAN_FRONTEND=noninteractive && dpkg --configure -a
-                curl -L "https://github.com/docker/compose/releases/download/1.27.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-                chmod +x /usr/local/bin/docker-compose
-                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-                add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-                apt update
-                apt install -y docker-ce docker-ce-cli containerd.io
-                systemctl enable docker.service
-                systemctl start docker.service
-                usermod -aG docker ubuntu
-                cd /home/ubuntu/
-                git clone https://github.com/stefa2k/prysm-docker-compose.git
-                cd prysm-docker-compose
-                curl -LO https://github.com/ethereum/eth2.0-deposit-cli/releases/download/v0.3.0/eth2deposit-cli-1681a93-linux-amd64.tar.gz
-                tar -zxvf eth2deposit-cli-1681a93-linux-amd64.tar.gz
-                rm -rf eth2deposit-cli-1681a93-linux-amd64.tar.gz
-                mkdir -p launchpad/eth2.0-deposit-cli/validator_keys
-                mkdir -p validator/wallets
-                echo "${WalletPassword}" > validator/passwords/wallet-password
-                chown -R ubuntu /home/ubuntu/prysm-docker-compose
-                sed -i 's/127.0.0.1:3000/3000/g' docker-compose.yaml
+                add-apt-repository -y ppa:ethereum/ethereum
+                apt-get install -y ethereum
+
+                # Geth
+                systemctl enable geth.service
+                systemctl start geth.service
+
+                # Prysm
+                su - ubuntu --command='git clone https://github.com/prysmaticlabs/prysm'
+                systemctl enable beacon.service
+                systemctl start beacon.service
+                systemctl enable validator.service
+                systemctl start validator.service
+
+                #Grafana
+                sudo apt-get install -y apt-transport-https
+                sudo apt-get install -y software-properties-common wget
+                wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+                echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee -a /etc/apt/sources.list.d/grafana.list 
+                sudo apt-get update
+                sudo apt-get install -y grafana
+                sudo /bin/systemctl daemon-reload
+                sudo systemctl enable grafana-server.service
+                sudo systemctl start grafana-server.service
+
+                # Prometheus
+                curl -Lo prometheus.tar.gz https://github.com/prometheus/prometheus/releases/download/v2.22.0-rc.0/prometheus-2.22.0-rc.0.linux-amd64.tar.gz
+                tar -zxvf prometheus.tar.gz
+                mv prometheus-* prometheus
+                sudo mkdir -p /etc/prometheus/console_libraries /etc/prometheus/consoles /etc/prometheus/files_sd /etc/prometheus/rules /etc/prometheus/rules.d
+                systemctl enable prometheus.service
+                systemctl start prometheus.service
 
           commands:
-            1-configure-efs:
-              command: bash /prysm-configure-env.sh
-            3-install-prysm:
+            04_config_prysm:
               command: bash /install_prysm.sh
     Properties:
       ImageId: !Ref Ubuntu18ImageId
-      SecurityGroupIds:
-        - !Ref ApplicationInstanceSecurityGroup
-      SubnetId: !Ref PrivateSubnet1
+      KeyName: !Ref KeyName
       InstanceType: !Ref ApplicationInstanceType
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: "0"
+          GroupSet:
+            - !GetAtt ApplicationInstanceSecurityGroup.GroupId
+          SubnetId: !Ref PublicSubnet1
+
       BlockDeviceMappings:
         - DeviceName: "/dev/sda1"
           Ebs:
@@ -589,134 +627,11 @@ Resources:
           FromPort: "3000"
           ToPort: "3000"
           IpProtocol: tcp
-
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Scheme: internet-facing
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      Type: application
-      SecurityGroups:
-        - !Ref ApplicationLoadBalancerSecurityGroup
-  ApplicationLoadBalancerListener3000:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref ApplicationLoadBalancerTargetGroup
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: "80"
-      Protocol: "HTTP"
-
-  ApplicationLoadBalancerSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Enable HTTP from internal environment.
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - CidrIp: !Ref GraffanaTrustedCIDR
-          FromPort: 80
-          ToPort: 80
+        - CidrIp: 0.0.0.0/0
+          FromPort: "22"
+          ToPort: "22"
           IpProtocol: tcp
-      Tags:
-        - Key: Name
-          Value: ApplicationLoadBalancer Security Group
-  ApplicationLoadBalancerTargetGroup:
-    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
-    Description: |
-      Target group for the LoadBalancer. Note that the autoscaling group sets its
-      TargetGroupARN field to this target group, ensuring all instances are registered
-      with the target group
-    Properties:
-      HealthCheckIntervalSeconds: 30
-      HealthyThresholdCount: 3
-      Port: 3000
-      Protocol: HTTP
-      UnhealthyThresholdCount: 3
-      HealthCheckPath: /login
-      VpcId: !Ref VPC
-      Targets:
-        - Id: !Ref ApplicationEC2Instance
-          Port: 3000
-
-  NetworkLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Scheme: internet-facing
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      Type: network
-
-  NetworkLoadBalancerListener12000:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref NetworkLoadBalancerListener12000TargetGroup
-      LoadBalancerArn: !Ref NetworkLoadBalancer
-      Port: "12000"
-      Protocol: TCP
-
-  NetworkLoadBalancerListener12000TargetGroup:
-    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
-    Description: |
-      Target group for the LoadBalancer. Note that the autoscaling group sets its
-      TargetGroupARN field to this target group, ensuring all instances are registered
-      with the target group
-    Properties:
-      HealthCheckIntervalSeconds: 30
-      HealthyThresholdCount: 3
-      UnhealthyThresholdCount: 3
-      # This should be 13000 since health check doesn't support UDP
-      Port: 13000
-      Protocol: TCP
-      VpcId: !Ref VPC
-      Targets:
-        - Id: !Ref ApplicationEC2Instance
-          Port: 12000
-      TargetGroupAttributes:
-        - Key: stickiness.enabled
-          Value: true
-        - Key: stickiness.type
-          Value: source_ip
-
-  NetworkLoadBalancerListener13000:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref NetworkLoadBalancerListener13000TargetGroup
-      LoadBalancerArn: !Ref NetworkLoadBalancer
-      Port: "13000"
-      Protocol: TCP
-
-  NetworkLoadBalancerListener13000TargetGroup:
-    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
-    Description: |
-      Target group for the LoadBalancer. Note that the autoscaling group sets its
-      TargetGroupARN field to this target group, ensuring all instances are registered
-      with the target group
-    Properties:
-      HealthCheckIntervalSeconds: 30
-      HealthyThresholdCount: 3
-      UnhealthyThresholdCount: 3
-      Port: 13000
-      Protocol: TCP
-      VpcId: !Ref VPC
-      Targets:
-        - Id: !Ref ApplicationEC2Instance
-          Port: 13000
-      TargetGroupAttributes:
-        - Key: stickiness.enabled
-          Value: true
-        - Key: stickiness.type
-          Value: source_ip
-
-Outputs:
-  # Prysm Outputs
-  ETHStakingDashboard:
-    Description: ETH Staking Dashboard.
-    Value: !Sub ${ApplicationLoadBalancer.DNSName}/d/t2yHaa3Zz/eth-staking-dashboard?orgId=1&refresh=10s&from=now-24h&to=now
+        - CidrIp: 0.0.0.0/0
+          FromPort: "4242"
+          ToPort: "4242"
+          IpProtocol: tcp
