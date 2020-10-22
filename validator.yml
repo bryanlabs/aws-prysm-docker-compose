@@ -226,6 +226,7 @@ Resources:
       Description: An EIP.
       GroupSet:
         - !GetAtt ApplicationInstanceSecurityGroup.GroupId
+      SourceDestCheck: true
       SubnetId: !Ref PublicSubnet1
 
   Association:
@@ -234,12 +235,12 @@ Resources:
       AllocationId: !GetAtt EIP.AllocationId
       NetworkInterfaceId: !Ref ENI
 
-  InterfaceAttachment:
-    Type: AWS::EC2::NetworkInterfaceAttachment
-    Properties:
-      InstanceId: !Ref ApplicationEC2Instance
-      NetworkInterfaceId: !Ref ENI
-      DeviceIndex: "1"
+  # InterfaceAttachment:
+  #   Type: AWS::EC2::NetworkInterfaceAttachment
+  #   Properties:
+  #     InstanceId: !Ref ApplicationEC2Instance
+  #     NetworkInterfaceId: !Ref ENI
+  #     DeviceIndex: "1"
 
   ApplicationEC2Instance:
     Type: AWS::EC2::Instance
@@ -560,11 +561,8 @@ Resources:
       KeyName: !Ref KeyName
       InstanceType: !Ref ApplicationInstanceType
       NetworkInterfaces:
-        - AssociatePublicIpAddress: false
-          DeviceIndex: "0"
-          GroupSet:
-            - !GetAtt ApplicationInstanceSecurityGroup.GroupId
-          SubnetId: !Ref PublicSubnet1
+        - DeviceIndex: "0"
+          NetworkInterfaceId: !Ref ENI
 
       BlockDeviceMappings:
         - DeviceName: "/dev/sda1"
