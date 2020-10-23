@@ -14,28 +14,11 @@ Once your in
 sudo su - ubuntu
 
 ```
-## Create or Sync your wallet  (not both)
-Create wallet  
-
-```
-#Create Wallet
-cd cd prysm-docker-compose
-./eth2deposit-cli-1681a93-linux-amd64/deposit --num_validators 1 --chain medalla
-mv validator_keys launchpad/eth2.0-deposit-cli/
-docker-compose -f create-account.yaml run validator-import-launchpad
-```
+## Import your wallet
 
 Sync your wallet  
 
 ```
 #Sync Wallet
-rsync -avzh walletlocation/validator/* prysm-docker-compose/validator/
+rsync -avzh walletlocation/validator/* ~/.eth2validators/prysm-wallet-v2/validator/
 ```
-
-and then follow the instructions [from the docker-compose setup](https://github.com/stefa2k/prysm-docker-compose#services) to finalize the installation.
-```
-docker-compose up -d
-docker-compose logs -f --tail=50 beacon slasher validator geth
-```
-
-
