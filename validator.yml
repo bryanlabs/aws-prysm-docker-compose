@@ -15,6 +15,7 @@ Metadata:
           - ApplicationName
           - GraffanaTrustedCIDR
           - KeyName
+          - Network
           - GethOptions
           - BeaconOptions
           - ValidatorOptions
@@ -40,6 +41,8 @@ Metadata:
         default: GraffanaTrustedCIDR
       KeyName:
         default: KeyName
+      Network:
+        default: network
       GethOptions:
         default: GethOptions
       BeaconOptions:
@@ -54,7 +57,7 @@ Parameters:
   ApplicationInstanceType:
     Description: Application server EC2 instance type
     Type: String
-    Default: r5a.large
+    Default: m5.xlarge
   ApplicationInstanceStorageSize:
     Description: Application server storage size (in GBs)
     Type: Number
@@ -81,11 +84,18 @@ Parameters:
   ApplicationName:
     Description: Application Name
     Type: String
-    Default: Prysm Medalla Validator
+    Default: Prysm Validator
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instance.
     Type: AWS::EC2::KeyPair::KeyName
     ConstraintDescription: Can contain only ASCII characters.
+  Network:
+    Description: The Ethereum network.
+    Type: String
+    Default: medalla
+    AllowedValues:
+      - medalla
+      - zinken
   GraffanaTrustedCIDR:
     Description: The Source CIDR allowed to access the Grafana Dashboard. Use 0.0.0.0/0 to allow all.
     Type: String
@@ -93,15 +103,15 @@ Parameters:
   GethOptions:
     Description: Geth options
     Type: String
-    Default: --goerli --rpc --rpcport=8545 --rpcaddr=0.0.0.0 --rpcvhosts="*" --allow-insecure-unlock --rpcapi="db,eth,net,web3,personal"
+    Default: --goerli --http --http.port=8545 --http.addr=0.0.0.0 --http.vhosts="*" --allow-insecure-unlock --http.api="db,eth,net,web3,personal"
   BeaconOptions:
     Description: Beacon options
     Type: String
-    Default: --medalla --head-sync --http-web3provider http://localhost:8545 --enable-db-backup-webhook --p2p-tcp-port 13000 --rpc-host 0.0.0.0 --monitoring-host 0.0.0.0 --accept-terms-of-use
+    Default: --blst --head-sync --min-sync-peers 1 --http-web3provider http://127.0.0.1:8545 --p2p-tcp-port 13000 --p2p-max-peers 75 --rpc-host 0.0.0.0 --monitoring-host 0.0.0.0 --accept-terms-of-use
   ValidatorOptions:
     Description: Validator options
     Type: String
-    Default: --medalla --wallet-password-file /home/ubuntu/prysm/wallet.password --accept-terms-of-use
+    Default: --blst --wallet-password-file ~/.eth2validators/prysm-wallet-v2/wallet.password --accept-terms-of-use
   PrometheusOptions:
     Description: Prometheus Options
     Type: String
@@ -234,13 +244,6 @@ Resources:
     Properties:
       AllocationId: !GetAtt EIP.AllocationId
       NetworkInterfaceId: !Ref ENI
-
-  # InterfaceAttachment:
-  #   Type: AWS::EC2::NetworkInterfaceAttachment
-  #   Properties:
-  #     InstanceId: !Ref ApplicationEC2Instance
-  #     NetworkInterfaceId: !Ref ENI
-  #     DeviceIndex: "1"
 
   ApplicationEC2Instance:
     Type: AWS::EC2::Instance
@@ -437,7 +440,7 @@ Resources:
                 Description=Prysm beacon-chain client
 
                 [Service]
-                ExecStart=/home/ubuntu/prysm/prysm.sh beacon-chain ${BeaconOptions}
+                ExecStart=/home/ubuntu/prysm/prysm.sh beacon-chain --${Network} ${BeaconOptions}
                 Restart=always
                 User=ubuntu
 
@@ -452,7 +455,7 @@ Resources:
                 WorkingDirectory=/home/ubuntu/prysm
                 User=ubuntu
                 Restart=always
-                ExecStart=/home/ubuntu/prysm/prysm.sh validator ${ValidatorOptions}
+                ExecStart=/home/ubuntu/prysm/prysm.sh validator --${Network} ${ValidatorOptions}
                 [Install]
                 WantedBy=default.target
             "/etc/systemd/system/prometheus.service":
@@ -466,6 +469,49 @@ Resources:
                 ExecStart=/home/ubuntu/prometheus/prometheus ${PrometheusOptions}
                 [Install]
                 WantedBy=default.target
+            "/etc/grafana/provisioning/dashboards/dashboard.yml":
+              content: !Sub |
+                apiVersion: 1
+                providers:
+                - name: 'Prometheus'
+                  orgId: 1
+                  folder: ''
+                  type: file
+                  disableDeletion: false
+                  editable: true
+                  options:
+                    path: /etc/grafana/provisioning/dashboards
+            "/etc/grafana/provisioning/datasources/datasource.yml":
+              content: !Sub |
+                apiVersion: 1
+                deleteDatasources:
+                  - name: Prometheus
+                    orgId: 1
+                datasources:
+                - name: Prometheus
+                  type: prometheus
+                  access: proxy
+                  orgId: 1
+                  url: http://127.0.0.1:9090
+                  password:
+                  user:
+                  database:
+                  basicAuth: true
+                  basicAuthUser: admin
+                  basicAuthPassword: admin
+                  withCredentials:
+                  isDefault: true
+                  jsonData:
+                    graphiteVersion: "1.1"
+                    tlsAuth: false
+                    tlsAuthWithCACert: false
+                  secureJsonData:
+                    tlsCACert: "..."
+                    tlsClientCert: "..."
+                    tlsClientKey: "..."
+                  version: 1
+                  editable: true
+
             "/etc/prometheus/prometheus.yml":
               content: !Sub |
                 global:
@@ -538,17 +584,18 @@ Resources:
                 sudo apt-get install -y apt-transport-https
                 sudo apt-get install -y software-properties-common wget
                 wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
-                echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee -a /etc/apt/sources.list.d/grafana.list 
+                echo "deb https://packages.grafana.com/oss/deb stable main" > /etc/apt/sources.list.d/grafana.list 
                 sudo apt-get update
                 sudo apt-get install -y grafana
+
                 sudo /bin/systemctl daemon-reload
                 sudo systemctl enable grafana-server.service
                 sudo systemctl start grafana-server.service
 
                 # Prometheus
-                curl -Lo prometheus.tar.gz https://github.com/prometheus/prometheus/releases/download/v2.22.0-rc.0/prometheus-2.22.0-rc.0.linux-amd64.tar.gz
-                tar -zxvf prometheus.tar.gz
-                mv prometheus-* prometheus
+                su - ubuntu --command='curl -Lo prometheus.tar.gz https://github.com/prometheus/prometheus/releases/download/v2.22.0-rc.0/prometheus-2.22.0-rc.0.linux-amd64.tar.gz'
+                su - ubuntu --command='tar -zxvf prometheus.tar.gz'
+                su - ubuntu --command='mv prometheus-* prometheus'
                 sudo mkdir -p /etc/prometheus/console_libraries /etc/prometheus/consoles /etc/prometheus/files_sd /etc/prometheus/rules /etc/prometheus/rules.d
                 systemctl enable prometheus.service
                 systemctl start prometheus.service
@@ -603,7 +650,7 @@ Resources:
             wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -O /tmp/amazon-cloudwatch-agent.deb
             dpkg -i /tmp/amazon-cloudwatch-agent.deb
             mkdir -p /opt/aws/bin
-            python /usr/lib/python2.7/dist-packages/easy_install.py --script-dir /opt/aws/bin https://s3.${AWS::URLSuffix}/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+            apt-get install -y heat-cfntools
             /opt/aws/bin/cfn-init --stack ${AWS::StackName} --resource ApplicationEC2Instance --region ${AWS::Region}
             /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ApplicationEC2Instance --region ${AWS::Region}
 
