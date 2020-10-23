@@ -650,7 +650,7 @@ Resources:
             wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -O /tmp/amazon-cloudwatch-agent.deb
             dpkg -i /tmp/amazon-cloudwatch-agent.deb
             mkdir -p /opt/aws/bin
-            apt-get install -y heat-cfntools
+            python /usr/lib/python2.7/dist-packages/easy_install.py --script-dir /opt/aws/bin https://s3.${AWS::URLSuffix}/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
             /opt/aws/bin/cfn-init --stack ${AWS::StackName} --resource ApplicationEC2Instance --region ${AWS::Region}
             /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ApplicationEC2Instance --region ${AWS::Region}
 
