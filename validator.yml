@@ -1,6 +1,6 @@
 ---
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Prysm Validator Node on AWS EC2 via prysm-docker-compose.
+Description: Prysm Validator Node on AWS.
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -13,7 +13,7 @@ Metadata:
           - ApplicationInstanceStorageIOPS
           - Ubuntu18ImageId
           - ApplicationName
-          - GraffanaTrustedCIDR
+          - TrustedCIDR
           - KeyName
           - Network
           - GethOptions
@@ -37,8 +37,8 @@ Metadata:
         default: Ubuntu18ImageId
       ApplicationName:
         default: ApplicationName
-      GraffanaTrustedCIDR:
-        default: GraffanaTrustedCIDR
+      TrustedCIDR:
+        default: TrustedCIDR
       KeyName:
         default: KeyName
       Network:
@@ -96,7 +96,7 @@ Parameters:
     AllowedValues:
       - medalla
       - zinken
-  GraffanaTrustedCIDR:
+  TrustedCIDR:
     Description: The Source CIDR allowed to access the Grafana Dashboard. Use 0.0.0.0/0 to allow all.
     Type: String
     Default: 0.0.0.0/0
@@ -111,7 +111,7 @@ Parameters:
   ValidatorOptions:
     Description: Validator options
     Type: String
-    Default: --blst --wallet-password-file ~/.eth2validators/prysm-wallet-v2/wallet.password --accept-terms-of-use
+    Default: --blst --wallet-dir ~/.eth2validators/prysm-wallet-v2 --wallet-password-file ~/.eth2validators/prysm-wallet-v2/wallet.password --accept-terms-of-use --web
   PrometheusOptions:
     Description: Prometheus Options
     Type: String
@@ -599,6 +599,16 @@ Resources:
                 sudo mkdir -p /etc/prometheus/console_libraries /etc/prometheus/consoles /etc/prometheus/files_sd /etc/prometheus/rules /etc/prometheus/rules.d
                 systemctl enable prometheus.service
                 systemctl start prometheus.service
+
+                # Bazel
+                sudo apt install curl gnupg
+                curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor > bazel.gpg
+                sudo mv bazel.gpg /etc/apt/trusted.gpg.d/
+                echo "deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
+                sudo apt-get -y update
+                sudo apt-get install -y bazel-3.2.0
+                bazel build //beacon:beacon
+                bazel build //validator:validator
 
           commands:
             04_config_prysm:
