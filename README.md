@@ -23,3 +23,7 @@ ssh -Xi keys/private.pem -L 3500:127.0.0.1:3500 -L 7500:127.0.0.1:7500 ubuntu@x.
 By default this tool expects your wallet to be `~/.eth2validators/prysm-wallet-v2`.  The Prysm WebUI can be used to create, or import your wallet.  Alternatively you can create your wallet by Connecting to the instance, and following
 https://docs.prylabs.network/docs/prysm-usage/running-a-validator#creating-your-wallet
 
+## Donate if you like
+
+[danb.eth](https://app.ens.domains/name/danb.eth)  
+ETH - 0xBe5Bd61fd37444290913Eff8f5dfF8C4D0d7A093

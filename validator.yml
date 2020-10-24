@@ -668,7 +668,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       VpcId: !Ref VPC
-      GroupDescription: Enable SSH from NetworkLoadbalancer, and HTTP from ApplicationLoadbalancer.
+      GroupDescription: Enable SSH from Trusted Locations, and enable necessary prysm node ports to the world.
       SecurityGroupIngress:
         - CidrIp: 0.0.0.0/0
           FromPort: "12000"
@@ -678,15 +678,7 @@ Resources:
           FromPort: "13000"
           ToPort: "13000"
           IpProtocol: tcp
-        - CidrIp: 0.0.0.0/0
-          FromPort: "3000"
-          ToPort: "3000"
-          IpProtocol: tcp
-        - CidrIp: 0.0.0.0/0
+        - CidrIp: !Ref TrustedCIDR
           FromPort: "22"
           ToPort: "22"
-          IpProtocol: tcp
-        - CidrIp: 0.0.0.0/0
-          FromPort: "4242"
-          ToPort: "4242"
           IpProtocol: tcp
