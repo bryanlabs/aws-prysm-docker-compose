@@ -19,6 +19,7 @@ Metadata:
           - GethOptions
           - BeaconOptions
           - ValidatorOptions
+          - SlasherOptions
           - PrometheusOptions
 
     ParameterLabels:
@@ -48,6 +49,8 @@ Metadata:
       BeaconOptions:
         default: BeaconOptions
       ValidatorOptions:
+        default: ValidatorOptions
+      SlasherOptions:
         default: ValidatorOptions
       PrometheusOptions:
         default: PrometheusOptions
@@ -107,11 +110,15 @@ Parameters:
   BeaconOptions:
     Description: Beacon options
     Type: String
-    Default: --blst --head-sync --min-sync-peers 1 --http-web3provider http://127.0.0.1:8545 --p2p-tcp-port 13000 --p2p-max-peers 75 --rpc-host 0.0.0.0 --monitoring-host 0.0.0.0 --accept-terms-of-use
+    Default: --grpc-gateway-corsdomain http://127.0.0.1/:7500,http://localhost:7500 --blst --head-sync --min-sync-peers 1 --http-web3provider http://127.0.0.1:8545 --p2p-tcp-port 13000 --p2p-max-peers 75 --rpc-host 0.0.0.0 --monitoring-host 0.0.0.0 --accept-terms-of-use
   ValidatorOptions:
     Description: Validator options
     Type: String
     Default: --blst --wallet-dir ~/.eth2validators/prysm-wallet-v2 --wallet-password-file ~/.eth2validators/prysm-wallet-v2/wallet.password --accept-terms-of-use --web
+  SlasherOptions:
+    Description: Slasher options
+    Type: String
+    Default: --accept-terms-of-use
   PrometheusOptions:
     Description: Prometheus Options
     Type: String
@@ -458,6 +465,18 @@ Resources:
                 ExecStart=/home/ubuntu/prysm/prysm.sh validator --${Network} ${ValidatorOptions}
                 [Install]
                 WantedBy=default.target
+            "/etc/systemd/system/slasher.service":
+              content: !Sub |
+                [Unit]
+                Description=Prysm slasher client
+
+                [Service]
+                WorkingDirectory=/home/ubuntu/prysm
+                User=ubuntu
+                Restart=always
+                ExecStart=/home/ubuntu/prysm/prysm.sh slasher --${Network} ${SlasherOptions}
+                [Install]
+                WantedBy=default.target
             "/etc/systemd/system/prometheus.service":
               content: !Sub |
                 [Unit]
@@ -522,7 +541,7 @@ Resources:
                     scrape_interval: 5s
                     static_configs:
                     - targets: ['127.0.0.1:9090']
-                  - job_name: 'beacon'
+                  - job_name: 'beacon node'
                     scrape_interval: 5s
                     static_configs:
                     - targets: ['127.0.0.1:8080']
@@ -534,6 +553,10 @@ Resources:
                     scrape_interval: 5s
                     static_configs:
                     - targets: ['127.0.0.1:8081']
+                  - job_name: 'slasher'
+                      scrape_interval: 5s
+                      static_configs:
+                      - targets: ['127.0.0.1:8082']
                   - job_name: 'ping_google'
                     metrics_path: /probe
                     params:
@@ -587,6 +610,7 @@ Resources:
                 echo "deb https://packages.grafana.com/oss/deb stable main" > /etc/apt/sources.list.d/grafana.list 
                 sudo apt-get update
                 sudo apt-get install -y grafana
+                curl -LO /etc/grafana/provisioning/dashboards/dashboard.json https://raw.githubusercontent.com/GuillaumeMiralles/prysm-grafana-dashboard/master/less_10_validators.json
 
                 sudo /bin/systemctl daemon-reload
                 sudo systemctl enable grafana-server.service
@@ -601,14 +625,14 @@ Resources:
                 systemctl start prometheus.service
 
                 # Bazel
-                sudo apt install curl gnupg
-                curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor > bazel.gpg
-                sudo mv bazel.gpg /etc/apt/trusted.gpg.d/
-                echo "deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
-                sudo apt-get -y update
-                sudo apt-get install -y bazel-3.2.0
-                bazel build //beacon:beacon
-                bazel build //validator:validator
+                # sudo apt install curl gnupg
+                # curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor > bazel.gpg
+                # sudo mv bazel.gpg /etc/apt/trusted.gpg.d/
+                # echo "deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
+                # sudo apt-get -y update
+                # sudo apt-get install -y bazel-3.2.0
+                # bazel build //beacon:beacon
+                # bazel build //validator:validator
 
           commands:
             04_config_prysm:
